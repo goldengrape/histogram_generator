@@ -281,3 +281,53 @@ button:hover { background-color: #2980b9; /* Darker blue */ }
     margin: 20px 0;
     text-align: center;
 }
+
+/* Data Input Grid for two textareas */
+.data-input-grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); /* Adjust minmax for potentially wider inputs */
+}
+.data-input-grid > .control-group:first-child { /* Sample data select */
+    grid-column: 1 / -1; /* Span full width if it's the only item in its row or looks better */
+}
+/* Adjust if sample data select needs specific column span */
+@media (min-width: 680px) { /* Example breakpoint where two textareas fit side-by-side */
+    .data-input-grid {
+        grid-template-columns: 1fr 1fr; /* Two equal columns */
+    }
+    .data-input-grid > .control-group:nth-child(1) { /* Sample data select */
+         grid-column: 1 / 3; /* Span both columns */
+    }
+    .data-input-grid > .control-group:nth-child(2) { /* Left data textarea */
+        grid-column: 1 / 2;
+    }
+    .data-input-grid > .control-group:nth-child(3) { /* Right data textarea */
+         grid-column: 2 / 3;
+    }
+}
+
+
+#dataInput_label button, label #clearDataLeftBtn, label #clearDataRightBtn { /* Updated selector */
+    float: right;
+    font-size: 0.8em;
+    padding: 2px 6px;
+    background-color: #e1e5e9;
+    color: #333;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+#dataInput_label button:hover, label #clearDataLeftBtn:hover, label #clearDataRightBtn:hover {
+    background-color: #d4d9dd;
+}
+
+/* --- Statistics Output for two columns --- */
+.statistics-output-flex-container {
+    display: flex;
+    gap: 20px; /* Spacing between the two stats blocks */
+    margin-top: 30px;
+    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+}
+.statistics-output-flex-container > .statistics-container {
+    flex: 1; /* Each takes up equal space */
+    min-width: 280px; /* Minimum width before wrapping */
+    margin-top: 0; /* Override margin from .statistics-container if it exists */
+}

@@ -1,11 +1,10 @@
 // --- START OF FILE script.js ---
 
-// Helper functions for statistics
+// Helper functions for statistics (unchanged)
 function getPercentile(data, percentile) {
     if (!data || data.length === 0) return undefined;
     const sortedData = [...data].sort((a, b) => a - b);
     if (sortedData.length === 1) return sortedData[0];
-
     const index = (percentile / 100) * (sortedData.length - 1);
     if (Number.isInteger(index)) {
         return sortedData[index];
@@ -15,89 +14,76 @@ function getPercentile(data, percentile) {
         return sortedData[lower] * (upper - index) + sortedData[upper] * (index - lower);
     }
 }
-
 function getMean(data) {
     if (!data || data.length === 0) return undefined;
     return data.reduce((sum, val) => sum + val, 0) / data.length;
 }
-
 function getStdDev(data, mean) {
     if (!data || data.length === 0 || mean === undefined) return undefined;
-    if (data.length === 1) return 0; // StdDev of a single point is 0
-
+    if (data.length === 1) return 0;
     const sqDiffs = data.map(value => Math.pow(value - mean, 2));
-    // For sample standard deviation, divide by (data.length - 1). For population, divide by data.length.
-    // Plotly typically uses population for its internal calculations or doesn't specify,
-    // for visual consistency using data.length might be fine for this tool.
-    // If sample std dev is strictly needed, change to data.length - 1 (and handle data.length < 2)
-    const variance = sqDiffs.reduce((sum, val) => sum + val, 0) / data.length; // Population variance
+    const variance = sqDiffs.reduce((sum, val) => sum + val, 0) / data.length;
     return Math.sqrt(variance);
 }
-
 function getIQR(q1, q3) {
     if (q1 === undefined || q3 === undefined) return undefined;
     return q3 - q1;
 }
-
 function formatStatValue(value) {
     if (value === undefined || value === null || isNaN(value)) return 'N/A';
-    // Check if it's effectively an integer after rounding to a few decimal places
-    if (Math.abs(value - Math.round(value)) < 0.0001 && Math.abs(value) < 1e6 ) { // Handle large numbers as float
+    if (Math.abs(value - Math.round(value)) < 0.0001 && Math.abs(value) < 1e6 ) {
         return Math.round(value).toString();
     }
-    // For numbers that are small or need precision
     if (Math.abs(value) > 0 && Math.abs(value) < 0.01) {
         return parseFloat(value).toPrecision(2);
     }
     return parseFloat(value).toFixed(2);
 }
 
-
+// Modified addStatisticLineShape to handle 'left', 'right', or 'full' shapes
 function addStatisticLineShape(shapes, statValue, color, dashStyle, width,
-                               histogramBinEdges, histogramCounts,
-                               histogramActualYMin, histogramActualYMax,
-                               numberOfBins) {
+                               histogramBinEdges, countsForThisSide,
+                               actualYMin, actualYMax, numberOfBins,
+                               side // 'left', 'right', or 'full'
+                              ) {
     if (statValue === undefined || width <= 0) return;
-
-    // Do not draw if outside the actual Y range of the histogram bins
-    if (statValue < histogramActualYMin || statValue > histogramActualYMax) {
-        return;
-    }
+    if (statValue < actualYMin || statValue > actualYMax) return;
     
     let binIndex = -1;
-    // Find which bin the statValue falls into
     for (let i = 0; i < numberOfBins; i++) {
         const lowerEdge = histogramBinEdges[i];
         const upperEdge = histogramBinEdges[i+1];
-        // statValue is in [lowerEdge, upperEdge)
         if (statValue >= lowerEdge && statValue < upperEdge) {
             binIndex = i;
             break;
         }
-        // Handle case where statValue is exactly the maximum Y value (upper edge of the last bin)
-        if (statValue === histogramActualYMax && i === numberOfBins - 1) {
+        if (statValue === actualYMax && i === numberOfBins - 1) {
             binIndex = i;
             break;
         }
     }
     
-    // If the statistic falls into a valid bin and that bin has counts
-    if (binIndex !== -1 && binIndex < histogramCounts.length) {
-        const countForBin = histogramCounts[binIndex];
-        // Only draw the line if the bin it falls into has a non-zero count to avoid clutter
-        if (countForBin > 0) {
+    if (binIndex !== -1 && binIndex < countsForThisSide.length) {
+        const countInBinForSide = countsForThisSide[binIndex];
+        if (countInBinForSide > 0) {
+            let xStart, xEnd;
+            if (side === 'full') {
+                xStart = -countInBinForSide;
+                xEnd = countInBinForSide;
+            } else if (side === 'left') {
+                xStart = -countInBinForSide;
+                xEnd = 0;
+            } else { // side === 'right'
+                xStart = 0;
+                xEnd = countInBinForSide;
+            }
+
             shapes.push({
                 type: 'line',
-                x0: -countForBin, // Line spans the width of the bar in that bin
-                y0: statValue,
-                x1: countForBin,
-                y1: statValue,
-                line: {
-                    color: color,
-                    width: width,
-                    dash: dashStyle
-                },
-                layer: 'above' // Ensure lines are drawn on top of bars
+                x0: xStart, y0: statValue,
+                x1: xEnd,   y1: statValue,
+                line: { color: color, width: width, dash: dashStyle },
+                layer: 'above'
             });
         }
     }
@@ -105,7 +91,8 @@ function addStatisticLineShape(shapes, statValue, color, dashStyle, width,
 
 
 document.addEventListener('DOMContentLoaded', () => {
-    const dataInput = document.getElementById('dataInput');
+    const dataInputLeftEl = document.getElementById('dataInputLeft');
+    const dataInputRightEl = document.getElementById('dataInputRight');
     const numBinsInput = document.getElementById('numBins');
     const chartTitleInput = document.getElementById('chartTitle');
     const yAxisMinInput = document.getElementById('yAxisMin');
@@ -116,12 +103,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const xAxisMaxInput = document.getElementById('xAxisMax');
     const barColorInput = document.getElementById('barColor');
     const sampleDataSelect = document.getElementById('sampleData');
-    const clearDataBtn = document.getElementById('clearDataBtn');
+    const clearDataLeftBtn = document.getElementById('clearDataLeftBtn');
+    const clearDataRightBtn = document.getElementById('clearDataRightBtn');
 
-    // Statistic line controls
+    // Statistic line controls (IDs remain the same)
     const showQ1LineCheckbox = document.getElementById('showQ1Line');
     const q1LineWidthInput = document.getElementById('q1LineWidth');
     const q1LineColorInput = document.getElementById('q1LineColor');
+    // ... (all other stat line control elements) ...
     const showMedianLineCheckbox = document.getElementById('showMedianLine');
     const medianLineWidthInput = document.getElementById('medianLineWidth');
     const medianLineColorInput = document.getElementById('medianLineColor');
@@ -144,7 +133,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadPngBtn = document.getElementById('downloadPngBtn');
     const downloadSvgBtn = document.getElementById('downloadSvgBtn');
     const errorMessageDiv = document.getElementById('errorMessage');
-    const statisticsOutputDiv = document.getElementById('statisticsOutput');
+    
+    const statisticsOutputContainer = document.getElementById('statisticsOutputContainer');
+    const statisticsOutputLeftDiv = document.getElementById('statisticsOutputLeft');
+    const statisticsOutputRightDiv = document.getElementById('statisticsOutputRight');
+    const statsTitleLeftEl = document.getElementById('statsTitleLeft');
+
 
     const preGeneratedSampleData = {
         basic: "8.78, 10.87, 11.96, 10.08, 10.41, 6.59, 8.91, 7.25, 8.67, 10.12, 10.11, 6.95, 14.70, 10.95, 8.82, 11.34, 10.95, 10.14, 9.09, 9.02, 11.03, 5.05, 7.19, 14.63, 8.12, 9.98, 9.91, 14.02, 9.04, 6.05, 10.89, 14.96, 11.04, 6.42, 12.74, 12.87, 10.47, 3.95, 14.65, 9.38, 7.10, 9.39, 14.06, 12.39, 15.95, 11.95, 6.06, 12.77, 12.78, 12.03, 10.94, 9.49, 12.18, 9.18, 8.98, 7.46, 10.62, 5.36, 9.32, 7.17, 7.39, 10.01, 9.75, 1.07, 3.81, 5.67, 9.96, 13.24, 10.69, 10.30, 9.34, 10.07, 10.14, 11.91, 8.75, 10.24, 7.80, 11.81, 9.34, 13.72, 13.92, 11.48, 8.28, 7.49, 8.30, 9.56, 8.57, 4.68, 4.33, 11.76, 5.87, 8.87, 8.61, 8.39, 16.45, 9.48, 6.13, 3.31, 9.58, 11.48",
@@ -157,28 +151,30 @@ document.addEventListener('DOMContentLoaded', () => {
     sampleDataSelect.addEventListener('change', (event) => {
         const selectedKey = event.target.value;
         if (preGeneratedSampleData[selectedKey]) {
-            dataInput.value = preGeneratedSampleData[selectedKey];
+            dataInputLeftEl.value = preGeneratedSampleData[selectedKey];
+            dataInputRightEl.value = ""; // Clear right side when sample is chosen
         } else if (selectedKey === "") {
-            // User chose custom input, do nothing or clear input
-            // dataInput.value = ""; // Optional: clear if they select "custom" after a sample
+            // dataInputLeftEl.value = ""; // Optional
         }
     });
 
-    clearDataBtn.addEventListener('click', () => {
-        dataInput.value = "";
-        sampleDataSelect.value = ""; // Reset sample selection
+    clearDataLeftBtn.addEventListener('click', () => {
+        dataInputLeftEl.value = "";
+        sampleDataSelect.value = ""; 
+    });
+    clearDataRightBtn.addEventListener('click', () => {
+        dataInputRightEl.value = "";
     });
     
-    // Set default data (matches 'basic' sample if desired, or your original default)
-    dataInput.value = preGeneratedSampleData.basic;
-    sampleDataSelect.value = "basic"; // Sync dropdown
+    dataInputLeftEl.value = preGeneratedSampleData.basic;
+    sampleDataSelect.value = "basic";
 
     function displayError(message) {
         errorMessageDiv.textContent = message;
         errorMessageDiv.style.display = 'block';
-        chartDiv.innerHTML = ''; // Clear previous chart
+        chartDiv.innerHTML = '';
         downloadButtonsDiv.style.display = 'none';
-        statisticsOutputDiv.style.display = 'none';
+        statisticsOutputContainer.style.display = 'none';
     }
 
     function clearError() {
@@ -194,142 +190,190 @@ document.addEventListener('DOMContentLoaded', () => {
             .filter(n => !isNaN(n));
         return values;
     }
-
-    function calculateHistogram(data, numBins, yMinUser, yMaxUser) {
-        if (data.length === 0) {
-            return { counts: [], binEdges: [0,1], binCenters: [0.5], actualYMin: 0, actualYMax: 1 };
-        }
-
-        let dataMin = Math.min(...data);
-        let dataMax = Math.max(...data);
-
-        let yMin = (yMinUser !== null && yMinUser !== undefined && yMinUser !== "") ? parseFloat(yMinUser) : dataMin;
-        let yMax = (yMaxUser !== null && yMaxUser !== undefined && yMaxUser !== "") ? parseFloat(yMaxUser) : dataMax;
+    
+    // Calculates histogram for a single dataset within a pre-defined Y-axis range
+    function calculateHistogramForSingleDataset(data, numBins, yMinForBins, yMaxForBins) {
+        const counts = new Array(numBins).fill(0);
+        const binEdges = [];
         
-        if (yMin >= yMax) {
-            if (dataMin === dataMax) { 
-                yMin = dataMin - 0.5;
-                yMax = dataMax + 0.5;
-            } else { 
-                yMin = dataMin;
-                yMax = dataMax;
-                 if (yMin === yMax) { 
-                     yMin -= 0.5;
-                     yMax += 0.5;
-                }
+        // This check should ideally be done by the caller, ensuring yMaxForBins > yMinForBins
+        if (yMaxForBins <= yMinForBins) {
+            // If yMax == yMin, create a small range around it.
+            if (yMaxForBins === yMinForBins) {
+                yMinForBins -= 0.5;
+                yMaxForBins += 0.5;
+            } else { // yMaxForBins < yMinForBins is an error state
+                 console.error("Invalid Y-axis range for histogram: yMax <= yMin.", yMinForBins, yMaxForBins);
+                 throw new Error("Y轴最大值必须大于最小值。");
             }
         }
-        
-        const binWidth = (yMax - yMin) / numBins;
-        if (binWidth <= 0) {
-             throw new Error("无法计算有效的 bin 宽度。请检查 Y 轴范围和 Bin 数量。");
+        if (numBins <= 0) {
+            throw new Error("Bin 数量必须为正。");
         }
 
-        const binEdges = [];
+
+        const binWidth = (yMaxForBins - yMinForBins) / numBins;
+
+        if (binWidth <= 0 || !isFinite(binWidth)) {
+            console.error("Error: Bin width is zero or invalid in calculateHistogramForSingleDataset.", yMinForBins, yMaxForBins, numBins);
+            throw new Error("无法计算有效的 bin 宽度。请检查 Y 轴范围和 Bin 数量。");
+        }
+
         for (let i = 0; i <= numBins; i++) {
-            binEdges.push(yMin + i * binWidth);
+            binEdges.push(yMinForBins + i * binWidth);
         }
 
-        const counts = new Array(numBins).fill(0);
-        for (const value of data) {
-            if (value >= yMin && value <= yMax) {
-                let binIndex = Math.floor((value - yMin) / binWidth);
-                if (value === yMax) { 
-                    binIndex = numBins - 1;
-                }
-                binIndex = Math.max(0, Math.min(binIndex, numBins - 1));
-                if (binIndex >= 0 && binIndex < numBins) {
+        if (data.length > 0) {
+            for (const value of data) {
+                if (value >= yMinForBins && value <= yMaxForBins) { // Include points exactly at yMaxForBins in the last bin
+                    let binIndex = Math.floor((value - yMinForBins) / binWidth);
+                    if (value === yMaxForBins) { // If value is exactly the max, it goes into the last bin
+                        binIndex = numBins - 1;
+                    }
+                    binIndex = Math.max(0, Math.min(binIndex, numBins - 1)); // Clamp index
                     counts[binIndex]++;
                 }
             }
         }
         
         const binCenters = binEdges.slice(0, -1).map(edge => edge + binWidth / 2);
-        return { counts, binEdges, binCenters, actualYMin: yMin, actualYMax: yMax };
+        return { counts, binEdges, binCenters, actualYMin: yMinForBins, actualYMax: yMaxForBins };
     }
 
-    function displayStatistics(data) {
-        const n = data.length;
-        const minVal = n > 0 ? Math.min(...data) : undefined;
-        const maxVal = n > 0 ? Math.max(...data) : undefined;
-        const q1 = getPercentile(data, 25);
-        const median = getPercentile(data, 50);
-        const q3 = getPercentile(data, 75);
-        const mean = getMean(data);
-        const stdDev = getStdDev(data, mean);
-        const iqr = getIQR(q1, q3);
+    function calculateStatsObject(data) {
+        const stats = {};
+        stats.n = data.length;
+        if (stats.n === 0) return stats; // Return early if no data
 
-        document.getElementById('statN').textContent = formatStatValue(n);
-        document.getElementById('statMin').textContent = formatStatValue(minVal);
-        document.getElementById('statMax').textContent = formatStatValue(maxVal);
-        document.getElementById('statQ1').textContent = formatStatValue(q1);
-        document.getElementById('statMedian').textContent = formatStatValue(median);
-        document.getElementById('statQ3').textContent = formatStatValue(q3);
-        document.getElementById('statMean').textContent = formatStatValue(mean);
-        document.getElementById('statStdDev').textContent = formatStatValue(stdDev);
-        document.getElementById('statIQR').textContent = formatStatValue(iqr);
+        stats.min = Math.min(...data);
+        stats.max = Math.max(...data);
+        stats.q1 = getPercentile(data, 25);
+        stats.median = getPercentile(data, 50);
+        stats.q3 = getPercentile(data, 75);
+        stats.mean = getMean(data);
+        stats.stdDev = getStdDev(data, stats.mean);
+        stats.iqr = getIQR(stats.q1, stats.q3);
+        if (stats.mean !== undefined && stats.stdDev !== undefined) {
+            stats.meanMinusStdDev = stats.mean - stats.stdDev;
+            stats.meanPlusStdDev = stats.mean + stats.stdDev;
+        }
+        return stats;
+    }
 
-        statisticsOutputDiv.style.display = 'block';
+    function displayStatistics(stats, idPrefix) {
+        document.getElementById('stat' + idPrefix + 'N').textContent = formatStatValue(stats.n);
+        document.getElementById('stat' + idPrefix + 'Min').textContent = formatStatValue(stats.min);
+        document.getElementById('stat' + idPrefix + 'Max').textContent = formatStatValue(stats.max);
+        document.getElementById('stat' + idPrefix + 'Q1').textContent = formatStatValue(stats.q1);
+        document.getElementById('stat' + idPrefix + 'Median').textContent = formatStatValue(stats.median);
+        document.getElementById('stat' + idPrefix + 'Q3').textContent = formatStatValue(stats.q3);
+        document.getElementById('stat' + idPrefix + 'Mean').textContent = formatStatValue(stats.mean);
+        document.getElementById('stat' + idPrefix + 'StdDev').textContent = formatStatValue(stats.stdDev);
+        document.getElementById('stat' + idPrefix + 'IQR').textContent = formatStatValue(stats.iqr);
     }
 
     generateChartBtn.addEventListener('click', () => {
         clearError();
-        const rawData = dataInput.value;
-        const parsedData = parseData(rawData);
+        const parsedDataLeft = parseData(dataInputLeftEl.value);
+        const parsedDataRight = parseData(dataInputRightEl.value);
+        const hasRightData = parsedDataRight.length > 0;
 
-        if (parsedData.length === 0) {
-            displayError("没有有效数据可供绘图。请输入数字，用换行或逗号分隔。");
-            statisticsOutputDiv.style.display = 'none';
+        if (parsedDataLeft.length === 0) {
+            displayError("左侧数据为空或无效。请输入数字，用换行或逗号分隔。");
             return;
         }
 
         const numBins = parseInt(numBinsInput.value, 10);
         if (isNaN(numBins) || numBins <= 0) {
             displayError("Bin 数量必须是一个正整数。");
-            statisticsOutputDiv.style.display = 'none';
             return;
         }
 
-        const chartTitle = chartTitleInput.value || '离散小提琴图';
-        const yAxisMin = yAxisMinInput.value;
-        const yAxisMax = yAxisMaxInput.value;
-        const yAxisLabel = yAxisLabelInput.value || '数值';
-        const xAxisLabelText = xAxisLabelInput.value || '频数';
-        const xAxisMinUser = xAxisMinInput.value !== "" ? parseFloat(xAxisMinInput.value) : undefined;
-        const xAxisMaxUser = xAxisMaxInput.value !== "" ? parseFloat(xAxisMaxInput.value) : undefined;
+        // Determine overall Y-axis range for consistent binning
+        const yAxisMinUserStr = yAxisMinInput.value;
+        const yAxisMaxUserStr = yAxisMaxInput.value;
+        let finalYMin, finalYMax;
+
+        const combinedDataForYRange = hasRightData ? [...parsedDataLeft, ...parsedDataRight] : parsedDataLeft;
         
-        const barColorHex = barColorInput.value;
-        const barOpacity = 0.7; 
+        const dataMinOverall = Math.min(...combinedDataForYRange);
+        const dataMaxOverall = Math.max(...combinedDataForYRange);
+
+        finalYMin = (yAxisMinUserStr !== "" && !isNaN(parseFloat(yAxisMinUserStr))) ? parseFloat(yAxisMinUserStr) : dataMinOverall;
+        finalYMax = (yAxisMaxUserStr !== "" && !isNaN(parseFloat(yAxisMaxUserStr))) ? parseFloat(yAxisMaxUserStr) : dataMaxOverall;
+
+        if (finalYMin >= finalYMax) {
+            if (dataMinOverall === dataMaxOverall) { // Single unique point in all data
+                finalYMin = dataMinOverall - 0.5;
+                finalYMax = dataMaxOverall + 0.5;
+            } else { // User input made min >= max, revert to data range
+                finalYMin = dataMinOverall;
+                finalYMax = dataMaxOverall;
+                if (finalYMin === finalYMax) { // Still single point after revert (e.g. user input was exactly dataMin/Max)
+                     finalYMin -= 0.5;
+                     finalYMax += 0.5;
+                }
+            }
+        }
+         if (finalYMin >= finalYMax) { // Ultimate fallback if still problematic
+            finalYMin = (isNaN(finalYMin) ? 0 : finalYMin) - 0.5;
+            finalYMax = (isNaN(finalYMax) ? 1 : finalYMax) + 0.5;
+             if (finalYMin >= finalYMax) { finalYMin=0; finalYMax=1; }
+        }
+
 
         try {
-            const histogramData = calculateHistogram(parsedData, numBins, yAxisMin, yAxisMax);
-            const { counts, binCenters, actualYMin, actualYMax, binEdges: histoBinEdges } = histogramData;
-
-            if (counts.length === 0 && parsedData.length > 0) {
-                 displayError("计算直方图后没有得到任何数据。请检查Y轴范围设置。");
-                 statisticsOutputDiv.style.display = 'none';
-                 return;
+            const histogramDataLeft = calculateHistogramForSingleDataset(parsedDataLeft, numBins, finalYMin, finalYMax);
+            let histogramDataRight;
+            if (hasRightData) {
+                histogramDataRight = calculateHistogramForSingleDataset(parsedDataRight, numBins, finalYMin, finalYMax);
+            } else {
+                // Mirror left data for the right side visually
+                histogramDataRight = { ...histogramDataLeft }; 
             }
 
-            const traceRight = {
-                y: binCenters, x: counts, type: 'bar', orientation: 'h', name: '频数',
+            const countsLeft = histogramDataLeft.counts;
+            const countsRight = histogramDataRight.counts; // Will be same as countsLeft if !hasRightData
+            const binCenters = histogramDataLeft.binCenters; // Should be same for both due to common Y range & bins
+            const commonBinEdges = histogramDataLeft.binEdges;
+            const commonActualYMin = histogramDataLeft.actualYMin;
+            const commonActualYMax = histogramDataLeft.actualYMax;
+
+
+            const chartTitle = chartTitleInput.value || '离散小提琴图';
+            const yAxisLabel = yAxisLabelInput.value || '数值';
+            const xAxisLabelText = xAxisLabelInput.value || '频数';
+            const xAxisMinUser = xAxisMinInput.value !== "" ? parseFloat(xAxisMinInput.value) : undefined;
+            const xAxisMaxUser = xAxisMaxInput.value !== "" ? parseFloat(xAxisMaxInput.value) : undefined;
+            const barColorHex = barColorInput.value;
+            const barOpacity = 0.7;
+
+            const traceLeftVis = {
+                y: binCenters, x: countsLeft.map(c => -c), type: 'bar', orientation: 'h', name: '左侧频数',
+                marker: { color: barColorHex, opacity: barOpacity, line: { color: 'rgba(0,0,0,0.6)', width: 0.5 } },
+                hoverinfo: 'y+text', text: countsLeft.map(String)
+            };
+            const traceRightVis = {
+                y: binCenters, x: countsRight, type: 'bar', orientation: 'h', name: hasRightData ? '右侧频数' : '频数',
                 marker: { color: barColorHex, opacity: barOpacity, line: { color: 'rgba(0,0,0,0.6)', width: 0.5 } },
                 hoverinfo: 'y+x'
             };
-            const traceLeft = {
-                y: binCenters, x: counts.map(c => -c), type: 'bar', orientation: 'h', name: '频数 (镜像)',
-                marker: { color: barColorHex, opacity: barOpacity, line: { color: 'rgba(0,0,0,0.6)', width: 0.5 } },
-                hoverinfo: 'y+text', text: counts.map(String), showlegend: false
-            };
-
-            const maxCount = Math.max(...counts, 0);
+            
+            const maxCountLeft = Math.max(0, ...countsLeft);
+            const maxCountRight = Math.max(0, ...countsRight);
             let xRange;
             if (xAxisMinUser !== undefined && xAxisMaxUser !== undefined && xAxisMinUser < xAxisMaxUser) {
                 xRange = [xAxisMinUser, xAxisMaxUser];
             } else {
-                 xRange = maxCount > 0 ? [-maxCount * 1.15, maxCount * 1.15] : [-1, 1];
+                const overallMaxCount = Math.max(maxCountLeft, maxCountRight);
+                xRange = overallMaxCount > 0 ? [-overallMaxCount * 1.15, overallMaxCount * 1.15] : [-1, 1];
+                if (hasRightData) { // Asymmetric default range if two datasets
+                     xRange = [-maxCountLeft * 1.15, maxCountRight * 1.15];
+                }
+                 if (xRange[0] === 0 && xRange[1] === 0) xRange = [-1,1]; // Ensure range is not [0,0]
             }
-            
+
+            // X-axis tick calculation (simplified for brevity, original was more complex but generally fine)
             const tickLayout = {};
             const [xMinRange, xMaxRange] = xRange;
             const maxAbsXVal = Math.max(Math.abs(xMinRange), Math.abs(xMaxRange));
@@ -343,13 +387,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 else if (mantissa < 3) dtick = 2 * power;
                 else if (mantissa < 7) dtick = 5 * power;
                 else dtick = 10 * power;
-                
-                if (dtick < 1 && maxAbsXVal >= 1 && counts.every(c => Number.isInteger(c))) { dtick = 1; }
-                if (dtick <= 0 && maxAbsXVal > 0) dtick = 1; 
-                else if (dtick <=0 && maxAbsXVal === 0) dtick = 0.5; 
+                if (dtick <= 0) dtick = 1; // Fallback
             }
-            if (dtick === 0 && (xMinRange !==0 || xMaxRange !==0 )) dtick = 1; 
-            else if (dtick === 0 && xMinRange === 0 && xMaxRange === 0) dtick = 0.5;
+             if (dtick < 1 && countsLeft.every(c => Number.isInteger(c)) && countsRight.every(c => Number.isInteger(c))) {
+                dtick = 1; // Ensure integer ticks if counts are integers and dtick is small
+            }
 
             const generatedTickVals = [];
             if (xMinRange <= 0 && xMaxRange >= 0) { generatedTickVals.push(0); } 
@@ -359,18 +401,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             tickLayout.tickvals = [...new Set(generatedTickVals)].sort((a, b) => a - b);
             
-            if ((tickLayout.tickvals.length < 3 && (xMinRange !== 0 || xMaxRange !== 0)) || 
-                (tickLayout.tickvals.length === 1 && tickLayout.tickvals[0] === 0 && (xMinRange !== 0 || xMaxRange !== 0))) {
-                const tempTicks = [xMinRange, xMaxRange];
-                if (xMinRange < 0 && xMaxRange > 0) tempTicks.push(0);
-                else if (xMinRange === 0 && xMaxRange !==0) tempTicks.push(0);
-                else if (xMaxRange === 0 && xMinRange !==0) tempTicks.push(0);
-                tickLayout.tickvals = [...new Set(tempTicks)].map(t => parseFloat(t.toPrecision(10))).sort((a, b) => a - b);
+            if (tickLayout.tickvals.length === 0 && (xMinRange !== 0 || xMaxRange !== 0)) {
+                 tickLayout.tickvals = [xMinRange, 0, xMaxRange].filter((v,i,a) => a.indexOf(v)===i).sort((a,b)=>a-b);
             }
-            if (xMinRange === 0 && xMaxRange === 0 && maxCount === 0 && tickLayout.tickvals.every(t => t===0) && tickLayout.tickvals.length ===1 ) { 
+             if (xRange[0] === 0 && xRange[1] === 0 && tickLayout.tickvals.every(t => t===0) && tickLayout.tickvals.length <=1 ) {
                 tickLayout.tickvals = [-1, -0.5, 0, 0.5, 1];
-                if (xRange[0] === 0 && xRange[1] === 0) xRange[1] = 1;
-            }
+             }
+
 
             tickLayout.ticktext = tickLayout.tickvals.map(v => {
                 const absV = Math.abs(v);
@@ -379,35 +416,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (dtick > 0 && dtick < 1) { const dtickStr = dtick.toString(); if (dtickStr.includes('.')) { numDecimalPlaces = dtickStr.split('.')[1].length; }}
                 const vStr = v.toString(); if (vStr.includes('.')) { numDecimalPlaces = Math.max(numDecimalPlaces, vStr.split('.')[1].length); }
                 
-                if (absV < Math.pow(10, -Math.min(numDecimalPlaces,3) -1 ) && absV !==0) { return absV.toPrecision(1); }
-                return absV.toFixed(Math.min(numDecimalPlaces, 3));
+                if (absV > 0 && absV < Math.pow(10, -Math.min(numDecimalPlaces,3) -1 ) ) { return absV.toPrecision(1); }
+                return parseFloat(absV.toFixed(Math.min(numDecimalPlaces, 4))); // Show more precision if dtick is small
             });
 
-            const shapes = [];
-            const q1 = getPercentile(parsedData, 25);
-            const median = getPercentile(parsedData, 50);
-            const q3 = getPercentile(parsedData, 75);
-            const mean = getMean(parsedData);
-            let stdDev, meanMinusStdDev, meanPlusStdDev;
 
-            if (mean !== undefined) {
-                stdDev = getStdDev(parsedData, mean);
-                if (stdDev !== undefined) {
-                    meanMinusStdDev = mean - stdDev;
-                    meanPlusStdDev = mean + stdDev;
-                }
+            // Calculate statistics
+            const statsLeft = calculateStatsObject(parsedDataLeft);
+            let statsRight = null;
+            if (hasRightData) {
+                statsRight = calculateStatsObject(parsedDataRight);
+            }
+
+            // Add statistic lines
+            const shapes = [];
+            const lineSide = hasRightData ? 'left' : 'full'; // For left data statistics
+            
+            // Lines for Left Data (or Full if single dataset)
+            if (showQ1LineCheckbox.checked) addStatisticLineShape(shapes, statsLeft.q1, q1LineColorInput.value, 'dot', parseFloat(q1LineWidthInput.value) || 2, commonBinEdges, countsLeft, commonActualYMin, commonActualYMax, numBins, lineSide);
+            if (showMedianLineCheckbox.checked) addStatisticLineShape(shapes, statsLeft.median, medianLineColorInput.value, 'solid', parseFloat(medianLineWidthInput.value) || 3, commonBinEdges, countsLeft, commonActualYMin, commonActualYMax, numBins, lineSide);
+            if (showQ3LineCheckbox.checked) addStatisticLineShape(shapes, statsLeft.q3, q3LineColorInput.value, 'dot', parseFloat(q3LineWidthInput.value) || 2, commonBinEdges, countsLeft, commonActualYMin, commonActualYMax, numBins, lineSide);
+            if (showMeanLineCheckbox.checked) addStatisticLineShape(shapes, statsLeft.mean, meanLineColorInput.value, 'dashdot', parseFloat(meanLineWidthInput.value) || 2, commonBinEdges, countsLeft, commonActualYMin, commonActualYMax, numBins, lineSide);
+            if (showMeanMinusStdDevLineCheckbox.checked && statsLeft.meanMinusStdDev !== undefined) addStatisticLineShape(shapes, statsLeft.meanMinusStdDev, meanMinusStdDevLineColorInput.value, 'longdash', parseFloat(meanMinusStdDevLineWidthInput.value) || 2, commonBinEdges, countsLeft, commonActualYMin, commonActualYMax, numBins, lineSide);
+            if (showMeanPlusStdDevLineCheckbox.checked && statsLeft.meanPlusStdDev !== undefined) addStatisticLineShape(shapes, statsLeft.meanPlusStdDev, meanPlusStdDevLineColorInput.value, 'longdash', parseFloat(meanPlusStdDevLineWidthInput.value) || 2, commonBinEdges, countsLeft, commonActualYMin, commonActualYMax, numBins, lineSide);
+
+            // Lines for Right Data (only if hasRightData)
+            if (hasRightData && statsRight) {
+                if (showQ1LineCheckbox.checked) addStatisticLineShape(shapes, statsRight.q1, q1LineColorInput.value, 'dot', parseFloat(q1LineWidthInput.value) || 2, commonBinEdges, countsRight, commonActualYMin, commonActualYMax, numBins, 'right');
+                if (showMedianLineCheckbox.checked) addStatisticLineShape(shapes, statsRight.median, medianLineColorInput.value, 'solid', parseFloat(medianLineWidthInput.value) || 3, commonBinEdges, countsRight, commonActualYMin, commonActualYMax, numBins, 'right');
+                if (showQ3LineCheckbox.checked) addStatisticLineShape(shapes, statsRight.q3, q3LineColorInput.value, 'dot', parseFloat(q3LineWidthInput.value) || 2, commonBinEdges, countsRight, commonActualYMin, commonActualYMax, numBins, 'right');
+                if (showMeanLineCheckbox.checked) addStatisticLineShape(shapes, statsRight.mean, meanLineColorInput.value, 'dashdot', parseFloat(meanLineWidthInput.value) || 2, commonBinEdges, countsRight, commonActualYMin, commonActualYMax, numBins, 'right');
+                if (showMeanMinusStdDevLineCheckbox.checked && statsRight.meanMinusStdDev !== undefined) addStatisticLineShape(shapes, statsRight.meanMinusStdDev, meanMinusStdDevLineColorInput.value, 'longdash', parseFloat(meanMinusStdDevLineWidthInput.value) || 2, commonBinEdges, countsRight, commonActualYMin, commonActualYMax, numBins, 'right');
+                if (showMeanPlusStdDevLineCheckbox.checked && statsRight.meanPlusStdDev !== undefined) addStatisticLineShape(shapes, statsRight.meanPlusStdDev, meanPlusStdDevLineColorInput.value, 'longdash', parseFloat(meanPlusStdDevLineWidthInput.value) || 2, commonBinEdges, countsRight, commonActualYMin, commonActualYMax, numBins, 'right');
             }
             
-            if (showQ1LineCheckbox.checked) addStatisticLineShape(shapes, q1, q1LineColorInput.value, 'dot', parseFloat(q1LineWidthInput.value) || 2, histoBinEdges, counts, actualYMin, actualYMax, numBins);
-            if (showMedianLineCheckbox.checked) addStatisticLineShape(shapes, median, medianLineColorInput.value, 'solid', parseFloat(medianLineWidthInput.value) || 3, histoBinEdges, counts, actualYMin, actualYMax, numBins);
-            if (showQ3LineCheckbox.checked) addStatisticLineShape(shapes, q3, q3LineColorInput.value, 'dot', parseFloat(q3LineWidthInput.value) || 2, histoBinEdges, counts, actualYMin, actualYMax, numBins);
-            if (showMeanLineCheckbox.checked) addStatisticLineShape(shapes, mean, meanLineColorInput.value, 'dashdot', parseFloat(meanLineWidthInput.value) || 2, histoBinEdges, counts, actualYMin, actualYMax, numBins);
-            if (showMeanMinusStdDevLineCheckbox.checked && meanMinusStdDev !== undefined) addStatisticLineShape(shapes, meanMinusStdDev, meanMinusStdDevLineColorInput.value, 'longdash', parseFloat(meanMinusStdDevLineWidthInput.value) || 2, histoBinEdges, counts, actualYMin, actualYMax, numBins);
-            if (showMeanPlusStdDevLineCheckbox.checked && meanPlusStdDev !== undefined) addStatisticLineShape(shapes, meanPlusStdDev, meanPlusStdDevLineColorInput.value, 'longdash', parseFloat(meanPlusStdDevLineWidthInput.value) || 2, histoBinEdges, counts, actualYMin, actualYMax, numBins);
-
             const layout = {
                 title: chartTitle,
-                yaxis: { title: yAxisLabel, range: [actualYMin, actualYMax], zeroline: false },
+                yaxis: { title: yAxisLabel, range: [commonActualYMin, commonActualYMax], zeroline: false },
                 xaxis: {
                     title: xAxisLabelText, range: xRange, zeroline: true, zerolinecolor: '#999', zerolinewidth: 1,
                     tickvals: tickLayout.tickvals, ticktext: tickLayout.ticktext
@@ -418,13 +463,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 shapes: shapes
             };
 
-            Plotly.newPlot(chartDiv, [traceRight, traceLeft], layout, {responsive: true, displaylogo: false});
-            displayStatistics(parsedData);
+            Plotly.newPlot(chartDiv, [traceLeftVis, traceRightVis], layout, {responsive: true, displaylogo: false});
+            
+            // Display statistics
+            displayStatistics(statsLeft, "Left");
+            statisticsOutputLeftDiv.style.display = 'block'; 
+            if (hasRightData && statsRight) {
+                displayStatistics(statsRight, "Right");
+                statisticsOutputRightDiv.style.display = 'block';
+                statsTitleLeftEl.textContent = '左侧数据统计';
+            } else {
+                statisticsOutputRightDiv.style.display = 'none';
+                statsTitleLeftEl.textContent = '数据统计信息';
+            }
+            statisticsOutputContainer.style.display = 'flex'; // Use flex for the container
             downloadButtonsDiv.style.display = 'flex';
 
         } catch (error) {
             displayError(`生成图表时出错: ${error.message}`);
-            statisticsOutputDiv.style.display = 'none';
+            statisticsOutputContainer.style.display = 'none';
             console.error("Chart generation error:", error);
         }
     });
@@ -441,7 +498,6 @@ document.addEventListener('DOMContentLoaded', () => {
         Plotly.downloadImage(chartDiv, {format: 'svg', width: 1000, height: 750, filename: filename});
     });
     
-    // Initial chart generation with default data
     generateChartBtn.click(); 
 });
 // --- END OF FILE script.js ---
