@@ -22,10 +22,10 @@
                 <p>这种图表特别适合比较不同组别或类别的数据分布，可以快速发现数据的中心趋势、分散程度和异常值。</p>
                 <h4>如何使用本工具：</h4>
                 <ol>
-                    <li>在“左侧数据”输入框中输入第一组数值。</li>
-                    <li>（可选）在“右侧数据”输入框中输入第二组数值。如果此处为空，左侧数据将镜像显示。</li>
+                    <li>使用上方的“选择示例数据”下拉菜单为左侧或右侧数据区快速填充数据。</li>
+                    <li>或在“左侧数据”和“右侧数据”（可选）输入框中手动输入数值。如果右侧数据为空，左侧数据将镜像显示。</li>
                     <li>数据可以使用逗号或换行分隔。</li>
-                    <li>设置图表参数（Bin数量、坐标轴范围等）。</li>
+                    <li>设置图表参数（Bin数量、标题、颜色等）。可以为左右两侧的条形图分别指定颜色。</li>
                     <li>选择要显示的统计线（中位数、均值、四分位数等）。这些设置将应用于所有存在的数据集。</li>
                     <li>点击“生成图表”按钮预览结果。</li>
                     <li>满意后，可以下载PNG或SVG格式的图表。</li>
@@ -34,9 +34,7 @@
                 <ul>
                     <li>图形的宽度表示在该数值范围内的数据密度。</li>
                     <li>如果输入两组数据，左侧图形对应左侧数据，右侧图形对应右侧数据。</li>
-                    <li>红色线表示中位数，显示数据的中心位置。</li>
-                    <li>蓝色和绿色线表示四分位数，显示数据的分散程度。</li>
-                    <li>橙色线表示均值，紫色线表示均值 ± 标准差范围。</li>
+                    <li>红色线表示中位数，蓝色和绿色线表示四分位数，橙色线表示均值，紫色线表示均值 ± 标准差范围。</li>
                     <li>当有两组数据时，统计线会分别绘制在各自的半区。</li>
                 </ul>
             </div>
@@ -46,20 +44,34 @@
             <details class="settings-group" open>
                 <summary><h3>数据设置 <span class="toggle-icon"></span></h3></summary>
                 <div class="settings-content settings-grid data-input-grid">
+                    <!-- Row 1: Sample Data Selectors -->
                     <div class="control-group">
-                        <label for="sampleData">选择示例数据 (填充至左侧):</label>
-                        <select id="sampleData">
+                        <label for="sampleDataLeft">选择示例数据 (填充至左侧):</label>
+                        <select id="sampleDataLeft">
                             <option value="">--自定义输入--</option>
                             <option value="basic">基本示例数据</option>
                             <option value="normal">正态分布样本</option>
                             <option value="bimodal">双峰分布样本</option>
                             <option value="skewed_right">偏态分布样本 (右偏)</option>
                             <option value="with_outliers">含异常值样本</option>
+                            <option value="empty">--清空下方输入框--</option>
                         </select>
                     </div>
-                    <div> <!-- Empty div for grid alignment if needed --> </div>
                     <div class="control-group">
-                        <label for="dataInput">左侧数据 (用换行或逗号分隔):
+                        <label for="sampleDataRight">选择示例数据 (填充至右侧):</label>
+                        <select id="sampleDataRight">
+                            <option value="">--自定义输入--</option>
+                            <option value="basic_alt">基本示例数据 (变体)</option>
+                            <option value="normal_shifted">正态分布 (偏移)</option>
+                            <option value="bimodal_alt">双峰分布 (变体)</option>
+                            <option value="skewed_left">偏态分布样本 (左偏)</option>
+                            <option value="uniform">均匀分布样本</option>
+                            <option value="empty">--清空下方输入框--</option>
+                        </select>
+                    </div>
+                    <!-- Row 2: Data Textareas -->
+                    <div class="control-group">
+                        <label for="dataInputLeft">左侧数据 (用换行或逗号分隔):
                             <button type="button" id="clearDataLeftBtn" title="清空左侧数据">清空</button>
                         </label>
                         <textarea id="dataInputLeft" rows="8" placeholder="-1.00, -1.50, -3.50,..."></textarea>
@@ -85,8 +97,12 @@
                         <input type="text" id="chartTitle" placeholder="我的离散小提琴图">
                     </div>
                     <div>
-                        <label for="barColor">柱状图颜色:</label>
-                        <input type="color" id="barColor" value="#6495ED">
+                        <label for="barColorLeft">左侧柱状图颜色:</label>
+                        <input type="color" id="barColorLeft" value="#6495ED"> <!-- Cornflower Blue -->
+                    </div>
+                    <div>
+                        <label for="barColorRight">右侧柱状图颜色:</label>
+                        <input type="color" id="barColorRight" value="#6495ED"> <!-- Default same as left -->
                     </div>
                 </div>
             </details>
